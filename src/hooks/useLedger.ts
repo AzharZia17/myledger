@@ -89,11 +89,13 @@ export function useLedger() {
 
   const refreshRemote = useCallback(() => refreshFromServer(true), []);
   const dashboard = calculateDashboard(snapshot, todayKey);
+  const loadingRemote = syncState.online && !syncState.hasLoadedRemote && !syncState.lastError;
 
   return {
     ...snapshot,
     dashboard,
     loadingLocal,
+    loadingRemote,
     online: syncState.online,
     syncing: syncState.syncing,
     lastSyncError: syncState.lastError,

@@ -27,10 +27,10 @@ export default function DashboardPage() {
       conflictCount={ledger.conflictCount}
       syncing={ledger.syncing}
       syncError={ledger.lastSyncError}
-      ready={!ledger.loadingLocal}
+      ready={!ledger.loadingLocal && !ledger.loadingRemote}
     />
     <main className="mx-auto min-h-dvh max-w-5xl px-4 pb-24 pt-6 sm:pb-10">
-      {ledger.loadingLocal ? <DashboardSkeleton /> : <>
+      {ledger.loadingLocal || ledger.loadingRemote ? <DashboardSkeleton /> : <>
         <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-start justify-between">
             <div>

@@ -28,7 +28,7 @@ The script initializes `Transactions` and `Settings` sheets and their headers. W
 
 ## Offline storage and synchronization
 
-- App startup fetches the latest full transaction snapshot and settings into IndexedDB. While open, the app refreshes from Google Sheets when returning to the foreground and at most once per minute.
+- App startup fetches the latest transaction snapshot and settings into IndexedDB. For older Apps Script deployments without `get_snapshot`, the app falls back to `get_transactions` and `get_settings`. A clean device waits for the initial server read before showing an empty ledger; failures are logged and shown with their error message. While open, the app refreshes from Google Sheets when returning to the foreground and at most once per minute.
 - Add, edit, delete, and settings changes commit to IndexedDB before the UI reports success. The dashboard recalculates from local records immediately.
 - A durable local queue retries requests with exponential backoff; the `online` event triggers an immediate sync attempt. Reopening the app also resumes pending sync.
 - UUIDs make retries idempotent. Updates and deletes include the last server `updated_at`; Apps Script rejects stale edits instead of silently overwriting another device's changes. Other open devices see server changes on their next foreground refresh (or within about one minute while active).

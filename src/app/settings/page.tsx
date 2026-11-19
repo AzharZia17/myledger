@@ -62,12 +62,12 @@ export default function SettingsPage() {
       conflictCount={ledger.conflictCount}
       syncing={ledger.syncing}
       syncError={ledger.lastSyncError}
-      ready={!ledger.loadingLocal}
+      ready={!ledger.loadingLocal && !ledger.loadingRemote}
     />
     <main className="mx-auto min-h-dvh max-w-2xl px-4 pb-24 pt-6">
       <h1 className="text-2xl font-semibold">Settings</h1>
-      {ledger.loadingLocal
-        ? <p className="mt-6 text-sm text-zinc-500">Loading settings from this device…</p>
+      {ledger.loadingLocal || ledger.loadingRemote
+        ? <p className="mt-6 text-sm text-zinc-500">Loading settings…</p>
         : <form onSubmit={submit} className="mt-6 space-y-5 rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
           <div className="space-y-1.5">
             <label htmlFor="opening-balance" className="text-sm font-medium">Opening balance</label>

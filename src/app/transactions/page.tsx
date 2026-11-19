@@ -84,7 +84,7 @@ export default function TransactionsPage() {
       conflictCount={ledger.conflictCount}
       syncing={ledger.syncing}
       syncError={ledger.lastSyncError}
-      ready={!ledger.loadingLocal}
+      ready={!ledger.loadingLocal && !ledger.loadingRemote}
     />
     <main className="mx-auto min-h-dvh max-w-5xl px-4 pb-24 pt-6 sm:pb-10">
       <div className="mb-5">
@@ -126,7 +126,7 @@ export default function TransactionsPage() {
         })}
       </section>}
 
-      {ledger.loadingLocal
+      {ledger.loadingLocal || ledger.loadingRemote
         ? <div className="space-y-2"><Skeleton className="h-16" /><Skeleton className="h-16" /><Skeleton className="h-16" /></div>
         : filtered.length
           ? <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -144,7 +144,7 @@ export default function TransactionsPage() {
             <p className="font-medium">No transactions found</p>
             <p className="mt-1 text-sm text-zinc-500">Try changing your filters.</p>
           </div>}
-      {!ledger.loadingLocal && filtered.length > pageSize && <Button
+      {!ledger.loadingLocal && !ledger.loadingRemote && filtered.length > pageSize && <Button
         variant="outline"
         className="mt-4 w-full"
         onClick={() => setPageSize((size) => size + 50)}

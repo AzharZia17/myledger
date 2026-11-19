@@ -42,6 +42,14 @@ describe("offline ledger persistence and synchronization", () => {
       app_name: "Test ledger",
       theme: "system",
     };
+    const cloudOnly = transaction({ id: "fresh-device-server-record", amount: 1_234.5 });
+    await mergeRemoteSnapshot([cloudOnly], settings);
+    const freshDeviceSnapshot = await readSnapshot();
+    expect(freshDeviceSnapshot.transactions.map((item) => item.id)).toEqual([cloudOnly.id]);
+    expect(freshDeviceSnapshot.transactions[0].syncStatus).toBe("synced");
+    await mergeRemoteSnapshot([], settings);
+    expect((await readSnapshot()).transactions).toHaveLength(0);
+
     await saveSettingsLocally(settings);
     const income = transaction();
     const expense = transaction({
