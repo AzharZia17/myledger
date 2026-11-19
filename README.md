@@ -20,18 +20,18 @@ Set `APP_ACCESS_PASSWORD` and `GOOGLE_APPS_SCRIPT_URL` in `.env.local`. The app 
 4. Deploy as a Web App executing as **Me**, then configure its access and copy the `/exec` URL.
 5. Add that URL as `GOOGLE_APPS_SCRIPT_URL`.
 
-The script initializes `Transactions` and `Settings` sheets and their headers. When changing the backend code, update the existing deployment through **Deploy → Manage deployments → Edit → New version → Deploy**.
+The script initializes `Transactions` and `Settings` sheets and their headers. When changing the backend code, update the existing deployment through **Deploy → Manage deployments → Edit → New version → Deploy**. The first request after this update migrates existing transaction amounts from integer cents to currency units, records a per-row migration marker, and formats the amount column to two decimal places. The migration resumes safely if interrupted.
 
-**Transactions:** `id, type, amount, category, source_destination, description, transaction_date, created_at, updated_at, deleted`. Money amounts are stored as integer cents.
+**Transactions:** `id, type, amount, category, source_destination, description, transaction_date, created_at, updated_at, deleted`. Transaction `amount` values are stored as currency units (for example, `250.50`), not cents. The script appends an `amount_storage` marker column after existing columns, so additional user columns are preserved.
 
-**Settings:** `key, value`, with `opening_balance`, `currency`, and `app_name` defaults.
+**Settings:** `key, value`, with `opening_balance`, `currency`, and `app_name` defaults. The `opening_balance` setting remains stored as integer cents.
 
 ## Offline storage and synchronization
 
-- The first online load fetches the latest full transaction snapshot and settings into IndexedDB.
+- App startup fetches the latest full transaction snapshot and settings into IndexedDB. While open, the app refreshes from Google Sheets when returning to the foreground and at most once per minute.
 - Add, edit, delete, and settings changes commit to IndexedDB before the UI reports success. The dashboard recalculates from local records immediately.
 - A durable local queue retries requests with exponential backoff; the `online` event triggers an immediate sync attempt. Reopening the app also resumes pending sync.
-- UUIDs make retries idempotent. Updates and deletes include the last server `updated_at`; Apps Script rejects stale edits instead of silently overwriting another device's changes.
+- UUIDs make retries idempotent. Updates and deletes include the last server `updated_at`; Apps Script rejects stale edits instead of silently overwriting another device's changes. Other open devices see server changes on their next foreground refresh (or within about one minute while active).
 - Conflicts remain stored locally until the user chooses the local version or the Google Sheets version. If a local add collided with a different server record, keeping the local version creates a new UUID.
 - The header distinguishes offline, pending, syncing, failed, and conflict states. A record is marked synced only after the backend confirms it.
 

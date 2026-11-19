@@ -19,6 +19,7 @@ let syncInFlight: Promise<void> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let lastRefreshAt = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
+const SNAPSHOT_REFRESH_INTERVAL = 60_000;
 
 function publishState(next: Partial<SyncState>) {
   state = { ...state, ...next };
@@ -47,6 +48,7 @@ export async function refreshFromServer(force = false): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
+      if (syncInFlight) await syncInFlight;
       const snapshot = await apiRequest<{
         transactions: Transaction[];
         settings: Settings;
@@ -54,7 +56,6 @@ export async function refreshFromServer(force = false): Promise<void> {
       await mergeRemoteSnapshot(snapshot.transactions, snapshot.settings);
       lastRefreshAt = Date.now();
       publishState({ online: true, lastError: null });
-      void syncPendingOperations();
     } catch (error) {
       publishState({
         online: navigator.onLine,
@@ -72,6 +73,7 @@ export function syncPendingOperations(): Promise<void> {
     publishState({ online: false });
     return Promise.resolve();
   }
+  if (refreshInFlight) return refreshInFlight.then(() => syncPendingOperations());
   if (syncInFlight) return syncInFlight;
   if (retryTimer) {
     clearTimeout(retryTimer);
@@ -148,16 +150,25 @@ export function startSyncCoordinator() {
   if (typeof window === "undefined") return () => undefined;
   const onOnline = () => {
     publishState({ online: true, lastError: null });
-    void refreshFromServer(true).finally(() => syncPendingOperations());
+    void syncPendingOperations().finally(() => refreshFromServer(true));
+  };
+  const onVisible = () => {
+    if (document.visibilityState === "visible" && navigator.onLine) {
+      void refreshFromServer().finally(() => syncPendingOperations());
+    }
   };
   const onOffline = () => publishState({ online: false });
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
+  document.addEventListener("visibilitychange", onVisible);
+  const refreshTimer = window.setInterval(onVisible, SNAPSHOT_REFRESH_INTERVAL);
   publishState({ online: navigator.onLine });
   if (navigator.onLine) void refreshFromServer().finally(() => syncPendingOperations());
   return () => {
     window.removeEventListener("online", onOnline);
     window.removeEventListener("offline", onOffline);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.clearInterval(refreshTimer);
   };
 }
 

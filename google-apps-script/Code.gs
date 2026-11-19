@@ -1,14 +1,19 @@
 const TRANSACTION_HEADERS = ['id','type','amount','category','source_destination','description','transaction_date','created_at','updated_at','deleted'];
+const AMOUNT_STORAGE_HEADER = 'amount_storage';
 const SETTINGS_HEADERS = ['key','value'];
 
 function doGet(e) {
   return respond(function() {
-    const action = e && e.parameter ? e.parameter.action : 'get_dashboard';
-    if (action === 'get_dashboard') return getDashboard();
-    if (action === 'get_transactions') return getTransactions();
-    if (action === 'get_settings') return getSettings();
-    if (action === 'get_snapshot') return getSnapshot();
-    throw error('INVALID_ACTION', 'Unknown API action');
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const action = e && e.parameter ? e.parameter.action : 'get_dashboard';
+      if (action === 'get_dashboard') return getDashboard();
+      if (action === 'get_transactions') return getTransactions();
+      if (action === 'get_settings') return getSettings();
+      if (action === 'get_snapshot') return getSnapshot();
+      throw error('INVALID_ACTION', 'Unknown API action');
+    } finally { lock.releaseLock(); }
   });
 }
 
@@ -50,6 +55,7 @@ function spreadsheet() {
   else ensureHeaders(transactions, TRANSACTION_HEADERS);
   if (!settings) { settings = ss.insertSheet('Settings'); settings.appendRow(SETTINGS_HEADERS); }
   else ensureHeaders(settings, SETTINGS_HEADERS);
+  migrateTransactionAmounts(transactions, ensureAmountStorageColumn(transactions));
   initializeSettings(settings);
   return {ss:ss, transactions:transactions, settings:settings};
 }
@@ -58,6 +64,38 @@ function ensureHeaders(sheet, headers) {
   if (sheet.getLastRow() === 0) { sheet.appendRow(headers); return; }
   const existing = sheet.getRange(1,1,1,headers.length).getValues()[0];
   for (let i=0;i<headers.length;i++) if (!existing[i]) sheet.getRange(1,i+1).setValue(headers[i]);
+}
+
+function ensureAmountStorageColumn(sheet) {
+  const lastColumn = Math.max(sheet.getLastColumn(), TRANSACTION_HEADERS.length);
+  const headers = sheet.getRange(1,1,1,lastColumn).getValues()[0];
+  const existingColumn = headers.indexOf(AMOUNT_STORAGE_HEADER);
+  if (existingColumn !== -1) return existingColumn + 1;
+  const column = lastColumn + 1;
+  sheet.getRange(1,column).setValue(AMOUNT_STORAGE_HEADER);
+  return column;
+}
+
+function migrateTransactionAmounts(sheet, storageColumn) {
+  for (let row=2;row<=sheet.getLastRow();row++) {
+    const storageCell = sheet.getRange(row,storageColumn);
+    const storage = String(storageCell.getValue() || '');
+    if (storage === 'major') continue;
+
+    const amountCell = sheet.getRange(row,3);
+    let legacyCents;
+    if (storage.indexOf('migrating:') === 0) {
+      legacyCents = Number(storage.slice('migrating:'.length));
+    } else {
+      legacyCents = Number(amountCell.getValue());
+      if (!isFinite(legacyCents)) throw error('MIGRATION_ERROR','Invalid legacy transaction amount on row ' + row);
+      storageCell.setValue('migrating:' + String(legacyCents));
+    }
+    if (!isFinite(legacyCents)) throw error('MIGRATION_ERROR','Invalid saved amount migration on row ' + row);
+    amountCell.setValue(Math.round(legacyCents) / 100);
+    amountCell.setNumberFormat('0.00');
+    storageCell.setValue('major');
+  }
 }
 
 function initializeSettings(sheet) {
@@ -111,11 +149,16 @@ function updateSettings(data) {
 
 function readTransactions(sheet) {
   if (sheet.getLastRow() < 2) return [];
-  const rows = sheet.getRange(2,1,sheet.getLastRow()-1,TRANSACTION_HEADERS.length).getValues();
+  const storageColumn = ensureAmountStorageColumn(sheet);
+  const rows = sheet.getRange(2,1,sheet.getLastRow()-1,storageColumn).getValues();
   return rows.map(function(row){
     const deleted = String(row[9]).toLowerCase() === 'true';
-    return {id:String(row[0]),type:String(row[1]),amount:centsToNumber(row[2]),category:String(row[3]||''),source_destination:String(row[4]||''),description:String(row[5]||''),transaction_date:normalizeDate(row[6]),created_at:normalizeDate(row[7]),updated_at:normalizeDate(row[8]),deleted:deleted};
+    return {id:String(row[0]),type:String(row[1]),amount:amountFromSheet(row[2],row[storageColumn-1]),category:String(row[3]||''),source_destination:String(row[4]||''),description:String(row[5]||''),transaction_date:normalizeDate(row[6]),created_at:normalizeDate(row[7]),updated_at:normalizeDate(row[8]),deleted:deleted};
   }).filter(function(row){return row.id && !row.deleted;});
+}
+
+function amountFromSheet(value, storage) {
+  return storage === 'major' ? Number(value || 0) : centsToNumber(value);
 }
 
 function normalizeDate(value) {
@@ -169,10 +212,13 @@ function validateTransaction(data) {
   if (!data.id || typeof data.id !== 'string' || data.id.length > 100) throw error('VALIDATION_ERROR','Invalid transaction ID');
   if (data.type !== 'income' && data.type !== 'expense') throw error('VALIDATION_ERROR','Invalid transaction type');
   const amount = Number(data.amount);
-  if (!isFinite(amount) || amount <= 0) throw error('VALIDATION_ERROR','Invalid amount');
+  const cents = Math.round(amount * 100);
+  if (!isFinite(amount) || amount <= 0 || !Number.isSafeInteger(cents) || Math.abs(amount * 100 - cents) > 1e-7) {
+    throw error('VALIDATION_ERROR','Invalid amount');
+  }
   if (data.type === 'income' && !String(data.source_destination || '').trim()) throw error('VALIDATION_ERROR','Source is required');
   if (!data.transaction_date || isNaN(new Date(data.transaction_date).getTime())) throw error('VALIDATION_ERROR','Invalid transaction date');
-  return amount;
+  return cents / 100;
 }
 
 function findTransactionRow(sheet, id) {
@@ -201,7 +247,13 @@ function addTransaction(data) {
   }
   const now = new Date().toISOString();
   const transaction = {id:String(data.id),type:data.type,amount:amount,category:String(data.category||''),source_destination:String(data.source_destination||''),description:String(data.description||''),transaction_date:new Date(data.transaction_date).toISOString(),created_at:now,updated_at:now,deleted:false};
-  sheets.transactions.appendRow([transaction.id,transaction.type,numberToCents(amount),transaction.category,transaction.source_destination,transaction.description,transaction.transaction_date,transaction.created_at,transaction.updated_at,false]);
+  const storageColumn = ensureAmountStorageColumn(sheets.transactions);
+  const row = new Array(storageColumn).fill('');
+  [transaction.id,transaction.type,amount,transaction.category,transaction.source_destination,transaction.description,transaction.transaction_date,transaction.created_at,transaction.updated_at,false]
+    .forEach(function(value,index){row[index]=value;});
+  row[storageColumn-1] = 'major';
+  sheets.transactions.appendRow(row);
+  sheets.transactions.getRange(sheets.transactions.getLastRow(),3).setNumberFormat('0.00');
   return {transaction:transaction,balance:getDashboard().balance};
 }
 
@@ -217,14 +269,14 @@ function updateTransaction(data) {
   const desiredDate = new Date(data.transaction_date).toISOString();
   const desired = {
     type:data.type,
-    amount:numberToCents(amount),
+    amount:amount,
     category:String(data.category||''),
     source_destination:String(data.source_destination||''),
     description:String(data.description||''),
     transaction_date:desiredDate
   };
   const isAlreadyApplied = current && current.type === desired.type &&
-    numberToCents(current.amount) === desired.amount &&
+    numberToCents(current.amount) === numberToCents(desired.amount) &&
     current.category === desired.category &&
     current.source_destination === desired.source_destination &&
     current.description === desired.description &&
@@ -236,6 +288,7 @@ function updateTransaction(data) {
   }
   const now = new Date().toISOString();
   sheets.transactions.getRange(row,2,1,9).setValues([[desired.type,desired.amount,desired.category,desired.source_destination,desired.description,desired.transaction_date,sheets.transactions.getRange(row,8).getValue(),now,false]]);
+  sheets.transactions.getRange(row,3).setNumberFormat('0.00');
   return {transaction:readTransactions(sheets.transactions).filter(function(t){return t.id===data.id})[0] || null,balance:getDashboard().balance};
 }
 

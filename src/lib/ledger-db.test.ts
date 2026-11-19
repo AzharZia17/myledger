@@ -4,6 +4,7 @@ import {
   calculateDashboard,
   markOperationFailed,
   markOperationSynced,
+  mergeRemoteSnapshot,
   pendingOperations,
   readSnapshot,
   resolveTransactionConflict,
@@ -69,6 +70,8 @@ describe("offline ledger persistence and synchronization", () => {
       transaction: { ...income, amount: 6_000, updated_at: "2026-01-02T00:00:00.000Z" },
     });
     await saveTransaction(expense, "add_transaction");
+    const expenseAdd = (await pendingOperations()).find((operation) => operation.transactionId === expense.id);
+    await markOperationSynced(expenseAdd!, { transaction: expense });
     expect(calculateDashboard(await readSnapshot()).balance).toBe(15_000);
 
     const overspend = transaction({ type: "expense", amount: 20_000, category: "Bills" });
@@ -103,5 +106,19 @@ describe("offline ledger persistence and synchronization", () => {
     const finalSnapshot = await readSnapshot();
     expect(finalSnapshot.transactions.find((item) => item.id === income.id)?.syncStatus).toBe("synced");
     expect(calculateDashboard(finalSnapshot).balance).toBe(16_000);
+
+    const remoteEdit = { ...income, amount: 6_500, updated_at: "2026-03-01T00:00:00.000Z" };
+    const remoteAdd = transaction({ id: "created-on-another-device", amount: 250.5 });
+    const pendingLocal = transaction({ id: "created-offline", amount: 42.25 });
+    await saveTransaction(pendingLocal, "add_transaction");
+    await mergeRemoteSnapshot([remoteEdit, remoteAdd], settings);
+    await mergeRemoteSnapshot([remoteEdit, remoteAdd], settings);
+
+    const reconciled = await readSnapshot();
+    expect(reconciled.transactions.find((item) => item.id === income.id)?.amount).toBe(6_500);
+    expect(reconciled.transactions.find((item) => item.id === remoteAdd.id)?.amount).toBe(250.5);
+    expect(reconciled.transactions.filter((item) => item.id === remoteAdd.id)).toHaveLength(1);
+    expect(reconciled.transactions.some((item) => item.id === expense.id)).toBe(false);
+    expect(reconciled.transactions.find((item) => item.id === pendingLocal.id)?.syncStatus).toBe("pending");
   });
 });
